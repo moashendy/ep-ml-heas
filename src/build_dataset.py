@@ -22,14 +22,26 @@ def process_all_files(input_dir, output_file):
         file_path = os.path.join(input_dir, f)
         comp_name = parse_filename(f)
         
+        # ... inside your loop for f in files ...
         try:
-            # Load the data, skipping comment lines
-            df = pd.read_csv(file_path, sep="\s+", comment='#', names=cols)
+            # Read the file
+            df = pd.read_csv(file_path, sep="\s+", comment='#', header=None)
+
+            # FIX: Only keep rows where the first column is a number 
+            # This removes those "N", "(E_F)", and corrupted character rows
+            df = df[pd.to_numeric(df[0], errors='coerce').notnull()]
             
-            # Add a new column so the ML model knows which material is which
+            # Now assign the 12 columns
+            df = df.iloc[:, :12] 
+            df.columns = ["T_e", "Volume", "E_F", "N_Ef", "gamma", "C_e", "v_F", "tau_e", "k_e", "k_lat", "lambda", "Log10_Ge"]
+            
+            # Convert all columns to float to be safe
+            for col in df.columns:
+                df[col] = pd.to_numeric(df[col])
+                
             df['Composition'] = comp_name
-            
             all_data.append(df)
+# ...
             print(f"Successfully parsed: {comp_name}")
         except Exception as e:
             print(f"Error parsing {f}: {e}")
