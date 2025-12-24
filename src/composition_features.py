@@ -2,47 +2,80 @@ import re
 import pandas as pd
 
 ELEMENTS = ["Al", "Cr", "Fe", "Co", "Ni", "Mn", "Cu"]
+# Elemental properties (literature values)
+VEC = {
+    "Al": 3, "Cr": 6, "Fe": 8, "Co": 9,
+    "Ni": 10, "Mn": 7, "Cu": 11
+}
 
-def parse_composition(comp):
-    """
-    Convert composition string into elemental fractions.
-    """
+ATOMIC_RADIUS = {  # metallic radius in Å
+    "Al": 1.43, "Cr": 1.28, "Fe": 1.26, "Co": 1.25,
+    "Ni": 1.24, "Mn": 1.27, "Cu": 1.28
+}
 
-    fractions = dict.fromkeys(ELEMENTS, 0.0)
+ELECTRONEGATIVITY = {  # Pauling
+    "Al": 1.61, "Cr": 1.66, "Fe": 1.83, "Co": 1.88,
+    "Ni": 1.91, "Mn": 1.55, "Cu": 1.90
+}
 
-    # Case 1: Equiatomic HEA (e.g. AlCrFeCoNi)
-    if "-" not in comp:
-        elems = re.findall(r"[A-Z][a-z]?", comp)
-        frac = 1.0 / len(elems)
-        for e in elems:
-            fractions[e] = frac
+def parse_composition_string(comp):
+    fractions = {el: 0.0 for el in ELEMENTS}
+
+    # Case 1: Equiatomic like AlCrFeCoNi
+    if "-" not in comp and "_" not in comp:
+        els = re.findall(r"[A-Z][a-z]?", comp)
+        frac = 1.0 / len(els)
+        for el in els:
+            fractions[el] = frac
         return fractions
 
-    # Case 2: Perturbation alloy (e.g. Co-0.05_Xx3-0.95)
-    main_elem, rest = comp.split("_")
-    elem, x_elem = main_elem.split("-")
-    x_elem = float(x_elem)
+    # Case 2: Explicit like Co-0.05_Xx3-0.95
+    parts = comp.split("_")
+    remaining_frac = 0.0
+    remaining_elements = []
 
-    fractions[elem] = x_elem
+    for p in parts:
+        if "Xx" in p:
+            n = int(re.search(r"Xx(\d+)", p).group(1))
+            remaining_frac = float(p.split("-")[1])
+            remaining_elements = n
+        else:
+            el, val = p.split("-")
+            fractions[el] = float(val)
 
-    # Extract how many elements share the remainder
-    m = re.search(r"Xx(\d+)-([\d.]+)", rest)
-    n_rest = int(m.group(1))
-    x_rest = float(m.group(2))
-
-    remaining_elements = [e for e in ELEMENTS if e != elem and e in comp or e in ["Cr","Fe","Ni"]]
-
-    # For your dataset, the base system is CrFeNi
-    base = ["Cr", "Fe", "Ni"]
-
-    share = x_rest / len(base)
-    for e in base:
-        fractions[e] = share
+    # Assign remaining fraction equally
+    unspecified = [el for el in ELEMENTS if fractions[el] == 0]
+    if remaining_frac > 0 and len(unspecified) > 0:
+        for el in unspecified[:remaining_elements]:
+            fractions[el] = remaining_frac / remaining_elements
 
     return fractions
 
 
 def expand_compositions(df):
-    comp_features = df["Composition"].apply(parse_composition)
-    comp_df = pd.DataFrame(comp_features.tolist())
-    return pd.concat([df.drop(columns=["Composition"]), comp_df], axis=1)
+    rows = []
+    for _, row in df.iterrows():
+        comp = row["Composition"]
+        frac = parse_composition_string(comp)
+        for el, v in frac.items():
+            row[el] = v
+        rows.append(row)
+
+    return pd.DataFrame(rows)
+
+def compute_VEC(row):
+    return sum(row[e] * VEC[e] for e in VEC if e in row)
+
+def compute_avg_radius(row):
+    return sum(row[e] * ATOMIC_RADIUS[e] for e in ATOMIC_RADIUS if e in row)
+
+def compute_delta(row):
+    r_bar = compute_avg_radius(row)
+    return 100 * (sum(
+        row[e] * (1 - ATOMIC_RADIUS[e] / r_bar) ** 2
+        for e in ATOMIC_RADIUS if e in row
+    ) ** 0.5)
+
+def compute_avg_electronegativity(row):
+    return sum(row[e] * ELECTRONEGATIVITY[e] for e in ELECTRONEGATIVITY if e in row)
+
